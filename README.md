@@ -12,8 +12,9 @@
 2. Sửa tên WiFi và Mật khẩu ở dòng 36-37 trong code cho đúng với WiFi nhà bạn.
 3. Chọn mạch là "XIAO_ESP32S3" hoặc "ESP32S3 Dev Module".
 4. Nhấn nút Mũi tên (Upload) để nạp code vào chip.
-5. Mở Serial Monitor lên để xem địa chỉ IP (ví dụ: 192.168.1.15).
-6. Dùng điện thoại hoặc máy tính truy cập vào địa chỉ IP đó để vào giao diện điều khiển.
+5. Sau khi nạp xong, ESP32 sẽ tự tạo một tên miền nội bộ.
+6. Dùng điện thoại hoặc máy tính truy cập vào địa chỉ: **http://gatekeeper.local**
+   *(Nếu không vào được bằng tên miền, bạn mới cần mở Serial Monitor để lấy địa chỉ IP số dạng 192.168.1.x)*
 
 ## 3. Cách sử dụng trên Web
 - **Xem Camera**: Hình ảnh sẽ hiện trực tiếp trên trang web.

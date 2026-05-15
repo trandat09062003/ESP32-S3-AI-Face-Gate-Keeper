@@ -6,7 +6,6 @@
 
 #include <WebServer.h>
 #include <WiFi.h>
-#include <ESPmDNS.h> // Thêm thư viện mDNS
 #include "esp_camera.h"
 #include <Wire.h>
 #include <Preferences.h>
@@ -47,7 +46,6 @@ struct FaceRecord {
     bool active;
 };
 FaceRecord db[10];
-uint8_t last_face[FACE_SIZE]; // Thêm biến lưu khuôn mặt trước đó
 Preferences prefs;
 String latest_msg = "System Ready";
 
@@ -103,9 +101,8 @@ bool initCamera(framesize_t frame_size, pixformat_t format) {
     esp_err_t err = esp_camera_init(&config);
     if (err == ESP_OK) {
         sensor_t * s = esp_camera_sensor_get();
-        s->set_brightness(s, 2); // Tăng độ sáng lên mức 2
-        s->set_contrast(s, 1);
-        if(format == PIXFORMAT_GRAYSCALE) s->set_gainceiling(s, GAINCEILING_16X); // Tăng Gain lên 16X
+        s->set_brightness(s, 1); s->set_contrast(s, 1);
+        if(format == PIXFORMAT_GRAYSCALE) s->set_gainceiling(s, GAINCEILING_8X);
     }
     return (err == ESP_OK);
 }
@@ -126,56 +123,11 @@ void handleJpg() {
 
 void handleAI() {
     initCamera(FRAMESIZE_QVGA, PIXFORMAT_GRAYSCALE);
-    
-    // TẤM 1: Chụp để làm mốc
-    camera_fb_t * fb1 = esp_camera_fb_get();
-    if(!fb1) { server.send(503, "text/plain", "Cam Fail"); return; }
-    for(int i=0; i<FACE_SIZE; i++) last_face[i] = fb1->buf[(100+(i/24)*2)*320 + (130+(i%24)*2)];
-    esp_camera_fb_return(fb1);
-
-    delay(100); // Đợi 100ms để phát hiện chuyển động con người
-
-    // TẤM 2: Chụp để so sánh
     camera_fb_t * fb = esp_camera_fb_get();
     if(fb) {
         uint8_t current[FACE_SIZE];
-        float q_jitter[4] = {0, 0, 0, 0}; 
+        for(int i=0; i<FACE_SIZE; i++) current[i] = fb->buf[(100+(i/24)*2)*320 + (130+(i%24)*2)];
         
-        for(int i=0; i<FACE_SIZE; i++) {
-            current[i] = fb->buf[(100+(i/24)*2)*320 + (130+(i%24)*2)];
-            int diff = abs((int)current[i] - (int)last_face[i]);
-            if (diff > 6) { // Lọc nhiễu nhẹ
-                int row = (i / 24); int col = (i % 24);
-                int quad = (row < 12 ? 0 : 2) + (col < 12 ? 0 : 1);
-                q_jitter[quad] += diff;
-            }
-            last_face[i] = current[i];
-        }
-
-        float max_q = 0, min_q = 99999, avg_q = 0;
-        for(int i=0; i<4; i++) {
-            q_jitter[i] /= (FACE_SIZE/4);
-            if(q_jitter[i] > max_q) max_q = q_jitter[i];
-            if(q_jitter[i] < min_q) min_q = q_jitter[i];
-            avg_q += q_jitter[i];
-        }
-        avg_q /= 4;
-
-        // TỶ LỆ BIẾN THIÊN (Variance): Người thật sẽ có tỷ lệ Max/Min cao (chuyển động không đều)
-        float variance_ratio = (min_q > 0.1) ? (max_q / min_q) : 1.0;
-        char metrics[32];
-        snprintf(metrics, sizeof(metrics), " [J:%.1f V:%.1f]", avg_q, variance_ratio);
-        Serial.printf("Avg Jitter: %.2f, Var Ratio: %.2f\n", avg_q, variance_ratio);
-
-        // ĐIỀU KIỆN NGHIÊM NGẶT
-        if (avg_q < 1.2 || variance_ratio < 1.4) {
-            latest_msg = "SPOOF DETECTED!" + String(metrics);
-            esp_camera_fb_return(fb);
-            initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
-            server.send(200, "text/plain", latest_msg);
-            return;
-        }
-
         float best_mse = 99999; int m_idx = -1;
         for(int i=0; i<10; i++) {
             if(db[i].active) {
@@ -188,14 +140,12 @@ void handleAI() {
         
         if(m_idx != -1 && best_mse < 2200) {
             String name = String(db[m_idx].name);
-            latest_msg = "WELCOME " + name + String(metrics);
-            addLog(name + String(metrics));
+            latest_msg = "WELCOME " + name;
+            addLog(name);
+            // OPEN DOOR VIA RELAY
             digitalWrite(RELAY_PIN, HIGH); digitalWrite(BUILTIN_LED, HIGH);
             is_door_open = true; door_timer = millis();
-        } else { 
-            latest_msg = "UNKNOWN PERSON" + String(metrics); 
-            addLog("Unknown" + String(metrics));
-        }
+        } else { latest_msg = "UNKNOWN PERSON"; }
         esp_camera_fb_return(fb);
     }
     initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
@@ -261,6 +211,7 @@ const char* INDEX_HTML = R"rawliteral(
         <div id="msg">SYSTEM READY</div>
         <button onclick="recognize()">SCAN FACE</button>
         <button onclick="enroll()">ENROLL</button>
+        <button style="background:#f59e0b" onclick="fetch('/test_relay').then(()=>refresh())">TEST RELAY</button>
         <button style="background:#ef4444" onclick="fetch('/clear').then(()=>location.reload())">CLEAR DATA</button>
         
         <h4>RECOGNITION HISTORY</h4>
@@ -305,11 +256,6 @@ void setup() {
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) delay(500);
     
-    // Khởi tạo tên miền nội bộ
-    if (MDNS.begin("gatekeeper")) {
-        Serial.println("MDNS responder started: http://gatekeeper.local");
-    }
-    
     configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
     
     server.on("/", HTTP_GET, [](){ server.send(200, "text/html", INDEX_HTML); });
@@ -317,6 +263,12 @@ void setup() {
     server.on("/ai", HTTP_GET, handleAI);
     server.on("/history", HTTP_GET, handleLogs);
     server.on("/enroll", HTTP_GET, handleEnroll);
+    server.on("/test_relay", HTTP_GET, [](){
+        digitalWrite(RELAY_PIN, HIGH);
+        latest_msg = "TESTING RELAY (5S)";
+        is_door_open = true; door_timer = millis();
+        server.send(200, "text/plain", "OK");
+    });
     server.on("/clear", HTTP_GET, [](){ for(int i=0; i<10; i++) db[i].active = false; save_db(); server.send(200); });
     
     server.begin();
