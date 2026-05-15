@@ -1,20 +1,21 @@
 /* 
- * PROJECT: ESP32-S3 AI Face Gate Keeper V23 RELAY EDITION
- * FEATURES: GitHub Core + Relay Control (GPIO 21) + Recognition History
- * NOTE: Servo code removed as requested.
+ * PROJECT: ESP32-S3 AI Face Gate Keeper V27 TFT EDITION
+ * FEATURES: Face Recognition + Anti-Spoofing + ST7735 Display + mDNS
  */
 
 #include <WebServer.h>
 #include <WiFi.h>
-#include <ESPmDNS.h> // Thêm thư viện mDNS
+#include <ESPmDNS.h>
 #include "esp_camera.h"
 #include <Wire.h>
 #include <Preferences.h>
 #include <time.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7735.h>
+#include <SPI.h>
 
 // ===========================
 // PIN CONFIGURATION
-
 // ===========================
 #define XCLK_GPIO_NUM  15
 #define SIOD_GPIO_NUM  4
@@ -31,11 +32,20 @@
 #define HREF_GPIO_NUM  7
 #define PCLK_GPIO_NUM  13
 
-#define RELAY_PIN      3   // Chân D2 - Nối vào chân IN của Relay
+#define RELAY_PIN      3
 #define BUILTIN_LED    48
 
-const char* ssid = "Happy House-2.4GH";
-const char* password = "12345689";
+// TFT PINS (ST7735)
+#define TFT_CS         42
+#define TFT_RST        41
+#define TFT_DC         40
+#define TFT_MOSI       39
+#define TFT_SCLK       38
+
+Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
+
+const char* ssid = "VIETSET_TECH";
+const char* password = "vs68686868";
 
 WebServer server(80);
 
@@ -47,7 +57,7 @@ struct FaceRecord {
     bool active;
 };
 FaceRecord db[10];
-uint8_t last_face[FACE_SIZE]; // Thêm biến lưu khuôn mặt trước đó
+uint8_t last_face[FACE_SIZE];
 Preferences prefs;
 String latest_msg = "System Ready";
 
@@ -62,6 +72,23 @@ int history_idx = 0;
 // Door Logic
 unsigned long door_timer = 0;
 bool is_door_open = false;
+
+// ===========================
+// HELPERS
+// ===========================
+
+void displayDoorStatus() {
+    tft.fillRect(0, 110, 160, 18, ST77XX_BLACK);
+    tft.setCursor(5, 115);
+    tft.setTextSize(1);
+    if (is_door_open) {
+        tft.setTextColor(ST77XX_GREEN);
+        tft.println("TRANG THAI: CUA MO");
+    } else {
+        tft.setTextColor(ST77XX_WHITE);
+        tft.println("TRANG THAI: CUA DONG");
+    }
+}
 
 void addLog(String name) {
     struct tm timeinfo;
@@ -83,10 +110,6 @@ void load_db() {
     prefs.end(); 
 }
 
-// ===========================
-// CAMERA CORE
-// ===========================
-
 bool initCamera(framesize_t frame_size, pixformat_t format) {
     esp_camera_deinit();
     camera_config_t config;
@@ -103,9 +126,9 @@ bool initCamera(framesize_t frame_size, pixformat_t format) {
     esp_err_t err = esp_camera_init(&config);
     if (err == ESP_OK) {
         sensor_t * s = esp_camera_sensor_get();
-        s->set_brightness(s, 2); // Tăng độ sáng lên mức 2
+        s->set_brightness(s, 2);
         s->set_contrast(s, 1);
-        if(format == PIXFORMAT_GRAYSCALE) s->set_gainceiling(s, GAINCEILING_16X); // Tăng Gain lên 16X
+        if(format == PIXFORMAT_GRAYSCALE) s->set_gainceiling(s, GAINCEILING_16X);
     }
     return (err == ESP_OK);
 }
@@ -127,77 +150,123 @@ void handleJpg() {
 void handleAI() {
     initCamera(FRAMESIZE_QVGA, PIXFORMAT_GRAYSCALE);
     
-    // TẤM 1: Chụp để làm mốc
     camera_fb_t * fb1 = esp_camera_fb_get();
     if(!fb1) { server.send(503, "text/plain", "Cam Fail"); return; }
-    for(int i=0; i<FACE_SIZE; i++) last_face[i] = fb1->buf[(100+(i/24)*2)*320 + (130+(i%24)*2)];
+    for(int i=0; i<FACE_SIZE; i++) last_face[i] = fb1->buf[(96+(i/24)*2)*320 + (136+(i%24)*2)];
     esp_camera_fb_return(fb1);
 
-    delay(100); // Đợi 100ms để phát hiện chuyển động con người
+    delay(100); 
 
-    // TẤM 2: Chụp để so sánh
     camera_fb_t * fb = esp_camera_fb_get();
-    if(fb) {
-        uint8_t current[FACE_SIZE];
-        float q_jitter[4] = {0, 0, 0, 0}; 
-        
-        for(int i=0; i<FACE_SIZE; i++) {
-            current[i] = fb->buf[(100+(i/24)*2)*320 + (130+(i%24)*2)];
-            int diff = abs((int)current[i] - (int)last_face[i]);
-            if (diff > 6) { // Lọc nhiễu nhẹ
-                int row = (i / 24); int col = (i % 24);
-                int quad = (row < 12 ? 0 : 2) + (col < 12 ? 0 : 1);
-                q_jitter[quad] += diff;
-            }
-            last_face[i] = current[i];
-        }
+    if (!fb) return;
 
-        float max_q = 0, min_q = 99999, avg_q = 0;
-        for(int i=0; i<4; i++) {
-            q_jitter[i] /= (FACE_SIZE/4);
-            if(q_jitter[i] > max_q) max_q = q_jitter[i];
-            if(q_jitter[i] < min_q) min_q = q_jitter[i];
-            avg_q += q_jitter[i];
-        }
-        avg_q /= 4;
+    tft.fillRect(0, 40, 160, 40, ST77XX_BLACK);
+    tft.setCursor(5, 50);
+    tft.setTextColor(ST77XX_YELLOW);
+    tft.setTextSize(1);
+    tft.println("DANG QUET MAT...");
 
-        // TỶ LỆ BIẾN THIÊN (Variance): Người thật sẽ có tỷ lệ Max/Min cao (chuyển động không đều)
-        float variance_ratio = (min_q > 0.1) ? (max_q / min_q) : 1.0;
-        char metrics[32];
-        snprintf(metrics, sizeof(metrics), " [J:%.1f V:%.1f]", avg_q, variance_ratio);
-        Serial.printf("Avg Jitter: %.2f, Var Ratio: %.2f\n", avg_q, variance_ratio);
-
-        // ĐIỀU KIỆN NGHIÊM NGẶT
-        if (avg_q < 1.2 || variance_ratio < 1.4) {
-            latest_msg = "SPOOF DETECTED!" + String(metrics);
-            esp_camera_fb_return(fb);
-            initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
-            server.send(200, "text/plain", latest_msg);
-            return;
+    uint8_t current_grayscale[FACE_SIZE];
+    float q_jitter[4] = {0, 0, 0, 0}; 
+    
+    for(int i=0; i<FACE_SIZE; i++) {
+        current_grayscale[i] = fb->buf[(96+(i/24)*2)*320 + (136+(i%24)*2)];
+        int diff = abs((int)current_grayscale[i] - (int)last_face[i]);
+        if (diff > 6) {
+            int row = (i / 24); int col = (i % 24);
+            int quad = (row < 12 ? 0 : 2) + (col < 12 ? 0 : 1);
+            q_jitter[quad] += diff;
         }
-
-        float best_mse = 99999; int m_idx = -1;
-        for(int i=0; i<10; i++) {
-            if(db[i].active) {
-                long err = 0;
-                for(int j=0; j<FACE_SIZE; j++) { int d = (int)current[j] - (int)db[i].template_data[j]; err += (long)d*d; }
-                float mse = (float)err/FACE_SIZE;
-                if(mse < best_mse) { best_mse = mse; m_idx = i; }
-            }
-        }
-        
-        if(m_idx != -1 && best_mse < 2200) {
-            String name = String(db[m_idx].name);
-            latest_msg = "WELCOME " + name + String(metrics);
-            addLog(name + String(metrics));
-            digitalWrite(RELAY_PIN, HIGH); digitalWrite(BUILTIN_LED, HIGH);
-            is_door_open = true; door_timer = millis();
-        } else { 
-            latest_msg = "UNKNOWN PERSON" + String(metrics); 
-            addLog("Unknown" + String(metrics));
-        }
-        esp_camera_fb_return(fb);
+        last_face[i] = current_grayscale[i];
     }
+
+    float max_q = 0, min_q = 99999, avg_q = 0;
+    for(int i=0; i<4; i++) {
+        q_jitter[i] /= (FACE_SIZE/4);
+        if(q_jitter[i] > max_q) max_q = q_jitter[i];
+        if(q_jitter[i] < min_q) min_q = q_jitter[i];
+        avg_q += q_jitter[i];
+    }
+    avg_q /= 4;
+
+    float variance_ratio = (min_q > 0.1) ? (max_q / min_q) : 1.0;
+    char metrics[32];
+    snprintf(metrics, sizeof(metrics), " [J:%.1f V:%.1f]", avg_q, variance_ratio);
+
+    if (avg_q < 1.2 || variance_ratio < 1.4) {
+        latest_msg = "SPOOF DETECTED!" + String(metrics);
+        tft.fillRect(0, 40, 160, 70, ST77XX_BLACK);
+        tft.setCursor(5, 50);
+        tft.setTextColor(ST77XX_RED);
+        tft.setTextSize(2);
+        tft.println("GIA MAO!");
+        tft.setTextSize(1);
+        tft.setCursor(5, 80);
+        tft.println("Canh bao anh tinh!");
+        
+        esp_camera_fb_return(fb);
+        initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
+        server.send(200, "text/plain", latest_msg);
+        return;
+    }
+
+    float best_mse = 99999; int found_idx = -1;
+    for(int i=0; i<10; i++) {
+        if(db[i].active) {
+            long err = 0;
+            for(int j=0; j<FACE_SIZE; j++) { 
+                int d = (int)current_grayscale[j] - (int)db[i].template_data[j]; 
+                err += (long)d*d; 
+            }
+            float mse = (float)err/FACE_SIZE;
+            if(mse < best_mse && mse < 1200) { 
+                best_mse = mse; 
+                found_idx = i; 
+            }
+        }
+    }
+
+    if (found_idx != -1) {
+        struct tm timeinfo;
+        String t_str = "00:00:00";
+        if(getLocalTime(&timeinfo)) {
+            char buf[16]; strftime(buf, sizeof(buf), "%H:%M:%S", &timeinfo);
+            t_str = String(buf);
+        }
+
+        latest_msg = "WELCOME " + String(db[found_idx].name) + String(metrics);
+        tft.fillRect(0, 40, 160, 70, ST77XX_BLACK);
+        tft.setTextColor(ST77XX_GREEN);
+        tft.setCursor(5, 50);
+        tft.setTextSize(1);
+        tft.println("XAC NHAN THANH CONG!");
+        tft.setCursor(5, 65);
+        tft.setTextSize(2);
+        tft.print("CHAO "); tft.println(db[found_idx].name);
+        tft.setCursor(5, 85);
+        tft.setTextSize(1);
+        tft.setTextColor(ST77XX_WHITE);
+        tft.print("Luc: "); tft.println(t_str);
+
+        addLog(db[found_idx].name);
+        digitalWrite(RELAY_PIN, HIGH);
+        is_door_open = true;
+        displayDoorStatus();
+        door_timer = millis();
+    } else {
+        latest_msg = "UNKNOWN PERSON" + String(metrics);
+        tft.fillRect(0, 40, 160, 70, ST77XX_BLACK);
+        tft.setCursor(5, 50);
+        tft.setTextColor(ST77XX_ORANGE);
+        tft.setTextSize(2);
+        tft.println("NGUOI LA");
+        tft.setTextSize(1);
+        tft.setCursor(5, 80);
+        tft.println("Khong co trong database");
+        addLog("Unknown" + String(metrics));
+    }
+    
+    esp_camera_fb_return(fb);
     initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
     server.send(200, "text/plain", latest_msg);
 }
@@ -223,7 +292,7 @@ void handleEnroll() {
         for(int i=0; i<10; i++) {
             if(!db[i].active) {
                 strncpy(db[i].name, name.c_str(), 31);
-                for(int j=0; j<FACE_SIZE; j++) db[i].template_data[j] = fb->buf[(100+(j/24)*2)*320 + (130+(j%24)*2)];
+                for(int j=0; j<FACE_SIZE; j++) db[i].template_data[j] = fb->buf[(96+(j/24)*2)*320 + (136+(j%24)*2)];
                 db[i].active = true; save_db(); break;
             }
         }
@@ -234,14 +303,14 @@ void handleEnroll() {
 }
 
 // ===========================
-// UI (V23)
+// UI
 // ===========================
 
 const char* INDEX_HTML = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
-    <title>AI RELAY GATE V23</title>
+    <title>AI RELAY GATE</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding: 20px; }
         .box { background: #1e293b; border-radius: 15px; padding: 20px; display: inline-block; box-shadow: 0 10px 20px rgba(0,0,0,0.3); width: 380px; }
@@ -256,14 +325,13 @@ const char* INDEX_HTML = R"rawliteral(
 </head>
 <body>
     <div class="box">
-        <h3>AI ACCESS CONTROL V23</h3>
+        <h3>AI ACCESS CONTROL</h3>
         <img id="view" src="/cam.jpg">
         <div id="msg">SYSTEM READY</div>
         <button onclick="recognize()">SCAN FACE</button>
         <button onclick="enroll()">ENROLL</button>
         <button style="background:#ef4444" onclick="fetch('/clear').then(()=>location.reload())">CLEAR DATA</button>
-        
-        <h4>RECOGNITION HISTORY</h4>
+        <h4>HISTORY</h4>
         <table class="log-table">
             <thead><tr><th>TIME</th><th>PERSON</th></tr></thead>
             <tbody id="log-body"></tbody>
@@ -274,8 +342,7 @@ const char* INDEX_HTML = R"rawliteral(
         function recognize() {
             document.getElementById('msg').innerText = "SCANNING...";
             fetch('/ai').then(r => r.text()).then(t => { 
-                document.getElementById('msg').innerText = t; 
-                refresh(); updateLogs();
+                document.getElementById('msg').innerText = t; refresh(); updateLogs();
             });
         }
         function enroll() {
@@ -287,8 +354,7 @@ const char* INDEX_HTML = R"rawliteral(
                 document.getElementById('log-body').innerHTML = data.map(i => `<tr><td>${i.time}</td><td>${i.name}</td></tr>`).join('');
             });
         }
-        setInterval(updateLogs, 5000);
-        updateLogs();
+        setInterval(updateLogs, 5000); updateLogs();
     </script>
 </body>
 </html>
@@ -300,14 +366,35 @@ void setup() {
     digitalWrite(RELAY_PIN, LOW);
     
     load_db();
-    initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
     
+    tft.initR(INITR_BLACKTAB);
+    tft.setRotation(1);
+    tft.fillScreen(ST77XX_BLACK);
+    tft.setTextColor(ST77XX_WHITE);
+    tft.setTextSize(1);
+    tft.setCursor(0, 10);
+    tft.println("AI FACE GATE V27");
+    tft.drawFastHLine(0, 25, 160, ST77XX_WHITE);
+    tft.setCursor(0, 40);
+    tft.println("Dang ket noi WiFi...");
+
+    initCamera(FRAMESIZE_QVGA, PIXFORMAT_JPEG);
+
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) delay(500);
     
-    // Khởi tạo tên miền nội bộ
+    tft.fillRect(0, 40, 160, 40, ST77XX_BLACK);
+    tft.setCursor(0, 40);
+    tft.println("WiFi: OK!");
+    tft.println(WiFi.localIP().toString());
+    delay(2000);
+    tft.fillRect(0, 40, 160, 40, ST77XX_BLACK);
+    tft.setCursor(5, 50);
+    tft.println("HE THONG SAN SANG");
+    displayDoorStatus();
+    
     if (MDNS.begin("gatekeeper")) {
-        Serial.println("MDNS responder started: http://gatekeeper.local");
+        Serial.println("MDNS started: http://gatekeeper.local");
     }
     
     configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
@@ -320,14 +407,13 @@ void setup() {
     server.on("/clear", HTTP_GET, [](){ for(int i=0; i<10; i++) db[i].active = false; save_db(); server.send(200); });
     
     server.begin();
-    Serial.println(WiFi.localIP());
 }
 
 void loop() {
     server.handleClient();
-    // Auto-off Relay after 5 seconds
-    if (is_door_open && (millis() - door_timer > 5000)) {
-        digitalWrite(RELAY_PIN, LOW); digitalWrite(BUILTIN_LED, LOW);
+    if (is_door_open && millis() - door_timer > 5000) {
+        digitalWrite(RELAY_PIN, LOW);
         is_door_open = false;
+        displayDoorStatus();
     }
 }
