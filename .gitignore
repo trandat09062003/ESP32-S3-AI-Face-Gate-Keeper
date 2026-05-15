@@ -1,0 +1,97 @@
+# =====================================================
+# ESP32-S3 / Arduino / macOS .gitignore
+# =====================================================
+
+esp32cam-main.zip
+
+# --------------------
+# Compiled output files
+# --------------------
+*.o
+*.obj
+*.elf
+*.bin
+*.map
+*.d
+*.hex
+*.eep
+*.out
+
+# --------------------
+# Arduino build folders
+# --------------------
+build/
+*.pio
+.pioenvs/
+.pio/
+.pio_build/
+__pycache__/
+
+# --------------------
+# IDE and editor files
+# --------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# --------------------
+# macOS system files
+# --------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+.Icon?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+
+# --------------------
+# Windows system files (safe cross-platform)
+# --------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --------------------
+# Logs, caches, and temp files
+# --------------------
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+.cache/
+output/
+uploads/
+
+# --------------------
+# Local data or SD card dumps
+# --------------------
+data/tmp/
+data/backup/
+sdcard/
+sd_data/
+
+# --------------------
+# Python / AI model integration (if used later)
+# --------------------
+venv/
+env/
+__pycache__/
+*.tflite
+*.onnx
+*.pb
+*.h5
+*.pth
+*.ckpt
+
+# --------------------
+# Sensitive credentials
+# --------------------
+wifi_config.h
+secrets.h
+config.json
+credentials.json
