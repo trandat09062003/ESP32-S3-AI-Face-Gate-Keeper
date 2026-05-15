@@ -1,0 +1,22 @@
+name: ESP32-S3 Build Check
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Arduino CLI
+        uses: arduino/setup-arduino-cli@v1
+
+      - name: Install ESP32 Platform
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32 --additional-urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+      - name: Build Sketch
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32s3 ./S3_Face_Recognition_V2/S3_Face_Recognition_V2.ino
