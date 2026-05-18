@@ -12,3 +12,6 @@ BACKUP_STABLE/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Secrets file (Wi-Fi passwords, etc.)
+**/secrets.h

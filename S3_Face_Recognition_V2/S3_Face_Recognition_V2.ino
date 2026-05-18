@@ -35,17 +35,16 @@
 #define RELAY_PIN      3
 #define BUILTIN_LED    48
 
-// TFT PINS (ST7735)
-#define TFT_CS         42
-#define TFT_RST        41
-#define TFT_DC         40
-#define TFT_MOSI       39
-#define TFT_SCLK       38
+// TFT PINS (ST7735) - REVERSED FOR STRAIGHT PARALLEL ROUTING
+#define TFT_SCLK       42
+#define TFT_MOSI       41
+#define TFT_RST        40
+#define TFT_DC         39
+#define TFT_CS         38
 
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 
-const char* ssid = "VIETSET_TECH";
-const char* password = "vs68686868";
+#include "secrets.h"
 
 WebServer server(80);
 
