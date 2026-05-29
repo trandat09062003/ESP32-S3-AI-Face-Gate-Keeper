@@ -12,11 +12,11 @@ Dự án sử dụng ESP32-S3 và Camera OV2640 để nhận diện khuôn mặt
 ### 1.2. Màn hình TFT ST7735
 - **VCC** -> 3.3V hoặc 5V
 - **GND** -> GND
-- **SCK** -> **GPIO 38**
-- **SDA (MOSI)** -> **GPIO 39**
-- **RES (RESET)** -> **GPIO 41**
-- **RS (DC)** -> **GPIO 40**
-- **CS** -> **GPIO 42**
+- **SCK** -> **GPIO 42**
+- **SDA (MOSI)** -> **GPIO 41**
+- **RES (RESET)** -> **GPIO 40**
+- **RS (DC)** -> **GPIO 39**
+- **CS** -> **GPIO 38**
 
 ## 2. Cách cài đặt và nạp code
 1. Cài đặt thư viện: `Adafruit GFX`, `Adafruit ST7735`.
@@ -37,4 +37,4 @@ Dự án sử dụng ESP32-S3 và Camera OV2640 để nhận diện khuôn mặt
 - Chỉ số **J (Jitter)** và **V (Variance)** hiển thị trên màn hình giúp theo dõi khả năng chống giả mạo.
 
 ---
-*Dự án được bảo trì bởi trandat09062003*
+

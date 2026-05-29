@@ -44,7 +44,8 @@
 
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCLK, TFT_RST);
 
-#include "secrets.h"
+const char* ssid = "VIETSET_TECH";
+const char* password = "vs68686868";
 
 WebServer server(80);
 
